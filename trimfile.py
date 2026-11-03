@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -91,6 +92,8 @@ SAMPLE_RATES = [MATCH, "22050", "32000", "44100", "48000"]
 CHANNELS = [MATCH, "Mono (1)", "Stereo (2)", "5.1 (6)"]
 CONTAINERS = [MATCH, "mp4", "mkv", "mov", "avi", "wmv", "webm", "ts"]
 KNOWN_CONT = {"mp4", "m4v", "mov", "mkv", "avi", "wmv", "webm", "ts"}
+
+DEFAULT_PROFILE = "Match Source - cắt chính xác frame"   # profile chọn sẵn mỗi lần mở app
 
 SETTING_KEYS = ["vcodec", "size", "bitrate", "fps", "preset", "pixfmt",
                 "acodec", "abitrate", "asr", "ach", "container", "accurate"]
@@ -506,6 +509,113 @@ def build_command(info, src_path, out_path, start, end, S):
     return cmd, ", ".join(notes)
 
 
+_FFMPEG_MAJOR = []
+
+
+def ffmpeg_major():
+    """Số phiên bản chính của ffmpeg (để chọn đúng tuỳ chọn đọc filter từ file). 0 nếu không rõ."""
+    if not _FFMPEG_MAJOR:
+        try:
+            r = run_quiet([FFMPEG, "-version"], capture_output=True, timeout=30)
+            m = re.search(r"version\s+n?(\d+)", r.stdout.decode("utf-8", "replace"))
+            _FFMPEG_MAJOR.append(int(m.group(1)) if m else 0)
+        except Exception:
+            _FFMPEG_MAJOR.append(0)
+    return _FFMPEG_MAJOR[0]
+
+
+def build_join_command(clips, out_path, S, graph_path):
+    """Ghép nhiều đoạn thành 1 file. clips = [(path, info, start, end), ...].
+    Luôn encode lại để ghép chính xác từng frame; 'Match Source' = lấy theo file đầu tiên.
+    Ghi filter graph vào graph_path (tránh giới hạn độ dài dòng lệnh). Trả về (cmd, mô_tả, tổng_giây)."""
+    first = clips[0][1]
+    fv = first["v"]
+    for path, info, _, _ in clips:
+        if not info["v"]:
+            raise ValueError(f"'{os.path.basename(path)}' không có video, không join được.")
+    fa = next((c[1]["a"] for c in clips if c[1]["a"]), None)
+    cont = ext_of(out_path)
+    cv, ca = CONTAINER_V.get(cont), CONTAINER_A.get(cont)
+
+    # --- thông số chung cho mọi đoạn
+    size, spec = parse_size(S["size"]), parse_bitrate(S["bitrate"])
+    if size:
+        W, H = size
+        if fv["h"] > fv["w"] and W > H:
+            W, H = H, W
+    else:
+        W, H = fv["w"], fv["h"]
+    W, H = W - W % 2, H - H % 2
+    fps = parse_fps(S["fps"]) or parse_fps(f"{fv['fps'] or 25:.3f}")
+    pix = S["pixfmt"].split()[0] if S["pixfmt"] != MATCH else None
+
+    aenc = ACODEC_BY_LABEL.get(S["acodec"])
+    want_audio = bool(fa) and aenc != "none"
+    sr = int(S["asr"]) if S["asr"] != MATCH else ((fa or {}).get("sr") or 48000)
+    m = re.search(r"\((\d+)\)", S["ach"]) if S["ach"] != MATCH else None
+    nch = int(m.group(1)) if m else ((fa or {}).get("ch") or 2)
+    layout = {1: "mono", 2: "stereo", 6: "5.1"}.get(nch, "stereo")
+
+    # --- filter graph
+    parts, labels, total = [], [], 0.0
+    for i, (path, info, start, end) in enumerate(clips):
+        d = end - start
+        total += d
+        parts.append(f"[{i}:v:0]setpts=PTS-STARTPTS,scale={W}:{H}:force_original_aspect_ratio=decrease:"
+                     f"force_divisible_by=2,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[v{i}]")
+        if want_audio:
+            fmt = f"aformat=sample_rates={sr}:channel_layouts={layout}:sample_fmts=fltp,asetpts=PTS-STARTPTS"
+            if info["a"]:
+                parts.append(f"[{i}:a:0]{fmt}[a{i}]")
+            else:                                   # đoạn không có tiếng -> chèn im lặng cho đủ độ dài
+                parts.append(f"anullsrc=r={sr}:cl={layout}:d={d:.3f},{fmt}[a{i}]")
+        labels.append(f"[v{i}]" + (f"[a{i}]" if want_audio else ""))
+    parts.append("".join(labels) + f"concat=n={len(clips)}:v=1:a={1 if want_audio else 0}[v]" + ("[a]" if want_audio else ""))
+    with open(graph_path, "w", encoding="utf-8") as f:
+        f.write(";\n".join(parts))
+
+    cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"]
+    for path, info, start, end in clips:
+        if start > 0:
+            cmd += ["-ss", f"{start:.3f}"]
+        cmd += ["-t", f"{end - start:.3f}", "-i", path]
+    cmd += ["-/filter_complex" if ffmpeg_major() >= 7 else "-filter_complex_script", graph_path,
+            "-map", "[v]"] + (["-map", "[a]"] if want_audio else []) + ["-map_chapters", "-1"]
+
+    # --- video
+    enc = ENC_BY_LABEL.get(S["vcodec"]) or EQUIV_V.get(fv["codec"], "libx264")
+    if cv is not None and enc_family(enc) not in cv:
+        enc = "libvpx-vp9" if cont == "webm" else "wmv2" if cont == "wmv" else "libx264"
+    cmd += ["-c:v", enc] + quality_args(enc, spec, fv["br"]) + preset_args(enc, S["preset"])
+    if pix:
+        cmd += ["-pix_fmt", pix]
+    if enc_family(enc) == "hevc" and cont in ("mp4", "m4v", "mov"):
+        cmd += ["-tag:v", "hvc1"]
+    notes = [f"{W}x{H}", f"{fps}fps", enc]
+
+    # --- audio
+    if want_audio:
+        if not aenc:
+            aenc = EQUIV_A.get(fa["codec"], "aac")
+            if ca is not None and ENC_FAMILY_A.get(aenc, aenc) not in ca:
+                aenc = "libopus" if cont == "webm" else "libmp3lame" if cont == "avi" else "wmav2" if cont == "wmv" else "aac"
+        cmd += ["-c:a", aenc]
+        if not aenc.startswith("pcm") and aenc != "flac":
+            abr = S["abitrate"].strip()
+            if abr != MATCH:
+                cmd += ["-b:a", abr if abr.lower().endswith("k") else abr + "k"]
+            else:
+                cmd += ["-b:a", str(fa["br"] or 192000)]
+        notes.append(aenc)
+
+    if cont in ("mp4", "m4v", "mov"):
+        cmd += ["-movflags", "+faststart"]
+    if cont == "m4v":
+        cmd += ["-f", "mp4"]
+    cmd += [out_path]
+    return cmd, f"join {len(clips)} đoạn → " + ", ".join(notes), total
+
+
 def unique_path(folder, stem, suffix, ext):
     p = os.path.join(folder, f"{stem}{suffix}.{ext}")
     n = 2
@@ -688,8 +798,7 @@ class App:
         self._load_profiles()
         self._detect_encoders()
         self._build_ui()
-        self._apply_profile(self.config.get("last_profile") if self.config.get("last_profile") in self.profiles
-                            else next(iter(self.profiles)))
+        self._apply_profile(DEFAULT_PROFILE if DEFAULT_PROFILE in self.profiles else next(iter(self.profiles)))
         self._bind_keys()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.after(15, self._poll)
@@ -708,7 +817,6 @@ class App:
 
     def _save_config(self):
         self.config.update({
-            "last_profile": self.profile_var.get(),
             "same_dir": self.same_dir_var.get(),
             "out_dir": self.out_dir_var.get(),
             "suffix": self.suffix_var.get(),
@@ -788,6 +896,9 @@ class App:
             b = ttk.Button(bar, text=text, command=cmd)
             b.pack(side="left", padx=2)
             self.list_buttons.append(b)
+        jb = ttk.Button(bar, text="🔗 Join files", style="Accent.TButton", command=self.start_join)
+        jb.pack(side="left", padx=(14, 2))
+        self.list_buttons.append(jb)
 
         # --- danh sách
         lf = ttk.Frame(root, padding=(8, 2))
@@ -1629,25 +1740,33 @@ class App:
         self.start_btn.configure(state=st)
         self.stop_btn.configure(state="normal" if busy else "disabled")
 
-    def start(self):
-        if self.running:
-            return
+    def _prepare_run(self):
+        """Kiểm tra thông số + thư mục đích. Trả về (S, out_cfg) hoặc None nếu có lỗi (đã báo cho người dùng)."""
         S = self.current_settings()
         err = validate_settings(S)
         if err:
             messagebox.showwarning("Thông số chưa hợp lệ", err)
-            return
+            return None
         if not self.same_dir_var.get():
             d = self.out_dir_var.get().strip()
             if not d:
                 messagebox.showwarning("Thiếu thư mục", "Hãy chọn thư mục lưu file thành phẩm "
                                                          "(hoặc tick 'Lưu cùng thư mục file gốc').")
-                return
+                return None
             try:
                 os.makedirs(d, exist_ok=True)
             except OSError as e:
                 messagebox.showerror("Lỗi", f"Không tạo được thư mục:\n{e}")
-                return
+                return None
+        return S, (self.same_dir_var.get(), self.out_dir_var.get().strip(), self.suffix_var.get())
+
+    def start(self):
+        if self.running:
+            return
+        prep = self._prepare_run()
+        if not prep:
+            return
+        S, out_cfg = prep
         jobs = []
         for iid in self.tree.get_children():
             it = self.items[iid]
@@ -1669,8 +1788,112 @@ class App:
         for iid, it in jobs:
             it.state, it.status = "ready", "Đang chờ…"
             self.refresh_row(iid)
-        out_cfg = (self.same_dir_var.get(), self.out_dir_var.get().strip(), self.suffix_var.get())
         threading.Thread(target=self._run_jobs, args=(jobs, S, out_cfg), daemon=True).start()
+
+    # ------------------------------------------------------------------ join
+    def start_join(self):
+        """Ghép các đoạn (In/Out) của những file đang chọn, theo thứ tự trong danh sách."""
+        if self.running:
+            return
+        chosen = set(self.tree.selection())
+        iids = [i for i in self.tree.get_children() if i in chosen]
+        if len(iids) < 2:
+            messagebox.showinfo("Join files", "Hãy chọn từ 2 file trở lên trong danh sách "
+                                              "(Ctrl+click hoặc Shift+click) rồi bấm Join files.\n"
+                                              "Các đoạn được ghép theo thứ tự từ trên xuống.")
+            return
+        clips = []
+        for iid in iids:
+            it = self.items[iid]
+            if not it.info:
+                messagebox.showwarning("Join files", f"'{it.name}' chưa đọc được thông tin, không join được.")
+                return
+            s, e = it.clip_range()
+            if e - s < 0.05:
+                messagebox.showwarning("Join files", f"Đoạn cắt của '{it.name}' quá ngắn.")
+                return
+            clips.append((iid, it, s, e))
+        total = sum(e - s for _, _, s, e in clips)
+        if not messagebox.askyesno(
+                "Join files",
+                f"Ghép {len(clips)} đoạn thành 1 file, tổng thời lượng {fmt_tc(total)}:\n\n" +
+                "\n".join(f"{n}. {it.name}  [{fmt_tc(s)} → {fmt_tc(e)}]" for n, (_, it, s, e) in enumerate(clips[:12], 1)) +
+                (f"\n… và {len(clips) - 12} đoạn nữa" if len(clips) > 12 else "") +
+                "\n\nJoin luôn encode lại video để ghép chính xác. Mục 'Match Source' lấy theo file đầu tiên "
+                "(size, fps, codec, bitrate). Tiếp tục?"):
+            return
+        prep = self._prepare_run()
+        if not prep:
+            return
+        S, out_cfg = prep
+        self._save_config()
+        self.stop_flag.clear()
+        self.set_busy(True)
+        self.total_bar["value"] = 0
+        for iid, it, _, _ in clips:
+            it.status = "Đang chờ join…"
+            self.refresh_row(iid)
+        threading.Thread(target=self._run_join, args=([(i, it) for i, it, _, _ in clips], S, out_cfg),
+                         daemon=True).start()
+
+    def _run_join(self, pairs, S, out_cfg):
+        same_dir, out_dir, _ = out_cfg
+        iids = [i for i, _ in pairs]
+        items = [it for _, it in pairs]
+        folder = os.path.dirname(items[0].path) if same_dir else out_dir
+        out_path = unique_path(folder, os.path.splitext(items[0].name)[0], "_join", resolve_container(S, items[0].path))
+        graph_path = os.path.join(tempfile.gettempdir(), f"trimfile_join_{os.getpid()}.txt")
+        done = fails = 0
+        try:
+            clips = [(it.path, it.info, *it.clip_range()) for it in items]
+            cmd, note, total = build_join_command(clips, out_path, S, graph_path)
+        except Exception as e:
+            self.q.put(("job", "jerror", iids, str(e)))
+            self.q.put(("job", "all", 0, 1, 1, False))
+            return
+        self.q.put(("job", "jstart", iids, note, out_path))
+        t0 = time.time()
+        rc, tail = self._exec_ffmpeg(cmd, total, lambda f: self.q.put(("job", "jprog", iids, f)))
+        self._try_remove(graph_path)
+        stopped = self.stop_flag.is_set()
+        if stopped:
+            self._try_remove(out_path)
+            self.q.put(("job", "jstopped", iids))
+        elif rc == 0 and os.path.exists(out_path):
+            done = 1
+            self.q.put(("job", "jdone", iids, out_path, time.time() - t0))
+        else:
+            fails = 1
+            self._try_remove(out_path)
+            self.q.put(("job", "jerror", iids, " | ".join(tail) or f"ffmpeg thoát mã {rc}"))
+        self.q.put(("job", "all", done, fails, 1, stopped))
+
+    def _on_join_event(self, ev):
+        kind, iids = ev[1], ev[2]
+        its = [(i, self.items[i]) for i in iids if i in self.items]
+        for _, it in its:
+            if kind == "jstart":
+                it.state, it.status = "running", "Đang join 0%"
+            elif kind == "jprog":
+                it.status = f"Đang join {ev[3] * 100:.0f}%"
+            elif kind == "jdone":
+                it.state, it.status = "done", f"Đã join ✓ ({ev[4]:.1f}s) → {os.path.basename(ev[3])}"
+            elif kind == "jerror":
+                it.state, it.status = "ready", "Lỗi join: " + ev[3][:160]
+            elif kind == "jstopped":
+                it.state, it.status = "ready", "Đã dừng join"
+        if kind == "jstart":
+            self.status_var.set(f"Đang {ev[3]}")
+        elif kind == "jprog":
+            self.total_bar["value"] = ev[3] * 1000
+        elif kind == "jdone":
+            self.total_bar["value"] = 1000
+            self.last_out_dir = os.path.dirname(ev[3])
+            self.status_var.set(f"Join xong: {os.path.basename(ev[3])}")
+        elif kind == "jerror":
+            self.status_var.set("Join lỗi: " + ev[3][:120])
+        for i, _ in its:
+            self.refresh_row(i)
 
     def stop(self):
         self.stop_flag.set()
@@ -1703,31 +1926,8 @@ class App:
                 fails += 1
                 continue
             self.q.put(("job", "start", iid, n, total, note, out_path))
-            tail = []
             t0 = time.time()
-            try:
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                     creationflags=NO_WINDOW, text=True, encoding="utf-8", errors="replace")
-                self.job_proc = p
-                for line in p.stdout:
-                    line = line.strip()
-                    if line.startswith(("out_time_us=", "out_time_ms=")):
-                        try:
-                            frac = min(int(line.split("=")[1]) / 1e6 / clip, 1.0)
-                            self.q.put(("job", "prog", iid, n, total, frac))
-                        except (ValueError, ZeroDivisionError):
-                            pass
-                    elif "=" in line and line.split("=")[0].replace("_", "").isalnum() and " " not in line.split("=")[0]:
-                        continue            # các dòng progress khác (fps=, bitrate=, ...)
-                    elif line:
-                        tail.append(line)
-                        tail = tail[-8:]
-                p.wait()
-                rc = p.returncode
-            except Exception as e:
-                rc, tail = -1, [str(e)]
-            finally:
-                self.job_proc = None
+            rc, tail = self._exec_ffmpeg(cmd, clip, lambda f: self.q.put(("job", "prog", iid, n, total, f)))
             if self.stop_flag.is_set():
                 self._try_remove(out_path)
                 self.q.put(("job", "stopped", iid, n, total))
@@ -1740,6 +1940,31 @@ class App:
                 self.q.put(("job", "error", iid, n, total, " | ".join(tail) or f"ffmpeg thoát mã {rc}"))
         self.q.put(("job", "all", done, fails, total, self.stop_flag.is_set()))
 
+    def _exec_ffmpeg(self, cmd, total_sec, on_prog):
+        """Chạy 1 lệnh ffmpeg, báo tiến độ (0..1) qua on_prog. Trả về (returncode, vài dòng lỗi cuối)."""
+        tail = []
+        try:
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                 creationflags=NO_WINDOW, text=True, encoding="utf-8", errors="replace")
+            self.job_proc = p
+            for line in p.stdout:
+                line = line.strip()
+                if line.startswith(("out_time_us=", "out_time_ms=")):
+                    try:
+                        on_prog(min(int(line.split("=")[1]) / 1e6 / total_sec, 1.0))
+                    except (ValueError, ZeroDivisionError):
+                        pass
+                elif "=" in line and line.split("=")[0].replace("_", "").isalnum() and " " not in line.split("=")[0]:
+                    continue            # các dòng progress khác (fps=, bitrate=, ...)
+                elif line:
+                    tail = (tail + [line])[-8:]
+            p.wait()
+            return p.returncode, tail
+        except Exception as e:
+            return -1, [str(e)]
+        finally:
+            self.job_proc = None
+
     @staticmethod
     def _try_remove(path):
         try:
@@ -1750,6 +1975,8 @@ class App:
 
     def _on_job_event(self, ev):
         kind = ev[1]
+        if kind.startswith("j"):
+            return self._on_join_event(ev)
         if kind == "all":
             _, _, done, fails, total, stopped = ev
             self.set_busy(False)
