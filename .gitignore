@@ -1,0 +1,10 @@
+# Binary ffmpeg - quá lớn / không đưa lên GitHub
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+
+# File phát sinh khi chạy
+config.json
+trimfile_error.log

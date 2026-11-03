@@ -1,0 +1,74 @@
+{
+  "profiles": {
+    "Match Source - cắt nhanh (copy)": {
+      "vcodec": "Match Source",
+      "size": "Match Source",
+      "bitrate": "Match Source",
+      "fps": "Match Source",
+      "preset": "Mặc định",
+      "pixfmt": "Match Source",
+      "acodec": "Match Source",
+      "abitrate": "Match Source",
+      "asr": "Match Source",
+      "ach": "Match Source",
+      "container": "Match Source",
+      "accurate": false
+    },
+    "Match Source - cắt chính xác frame": {
+      "vcodec": "Match Source",
+      "size": "Match Source",
+      "bitrate": "Match Source",
+      "fps": "Match Source",
+      "preset": "Mặc định",
+      "pixfmt": "Match Source",
+      "acodec": "Match Source",
+      "abitrate": "Match Source",
+      "asr": "Match Source",
+      "ach": "Match Source",
+      "container": "Match Source",
+      "accurate": true
+    },
+    "H.264 1080p 8 Mbps (MP4)": {
+      "vcodec": "H.264 (x264)",
+      "size": "1920x1080 (Full HD)",
+      "bitrate": "8 Mbps",
+      "fps": "Match Source",
+      "preset": "medium",
+      "pixfmt": "yuv420p (8-bit)",
+      "acodec": "AAC",
+      "abitrate": "192k",
+      "asr": "Match Source",
+      "ach": "Match Source",
+      "container": "mp4",
+      "accurate": false
+    },
+    "H.264 720p 4 Mbps (MP4)": {
+      "vcodec": "H.264 (x264)",
+      "size": "1280x720 (HD)",
+      "bitrate": "4 Mbps",
+      "fps": "Match Source",
+      "preset": "medium",
+      "pixfmt": "yuv420p (8-bit)",
+      "acodec": "AAC",
+      "abitrate": "128k",
+      "asr": "Match Source",
+      "ach": "Match Source",
+      "container": "mp4",
+      "accurate": false
+    },
+    "Nhỏ gọn H.264 480p CRF 28": {
+      "vcodec": "H.264 (x264)",
+      "size": "854x480 (480p)",
+      "bitrate": "CRF 28 (nhỏ gọn)",
+      "fps": "Match Source",
+      "preset": "veryfast",
+      "pixfmt": "yuv420p (8-bit)",
+      "acodec": "AAC",
+      "abitrate": "96k",
+      "asr": "Match Source",
+      "ach": "Match Source",
+      "container": "mp4",
+      "accurate": false
+    }
+  }
+}
