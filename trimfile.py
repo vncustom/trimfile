@@ -26,6 +26,10 @@ import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+APP_NAME = "Trim file"
+APP_VERSION = "1.1"
+APP_AUTHOR = "Ly Han"
+APP_TITLE = f"{APP_NAME} version {APP_VERSION} by {APP_AUTHOR}"
 APP_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
 PROFILES_PATH = os.path.join(APP_DIR, "profiles.json")
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
@@ -158,12 +162,58 @@ VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".ts", ".mts", ".m2ts", "
               ".wmv", ".flv", ".m4v", ".mxf", ".3gp", ".vob", ".mpv")
 
 
+TC_FPS = 25  # timecode dạng HH:MM:SS:FF, 1 giây = 25 frame
+
+GUIDE_TEXT = f"""# CÁCH DÙNG NHANH
+1. THÊM FILE
+   Bấm "Thêm file…" hoặc "Thêm thư mục…" để đưa video vào danh sách (thêm được nhiều file). Muốn lấy nhiều đoạn từ cùng 1 file thì bấm "Nhân đôi".
+
+2. CHỌN ĐOẠN CẦN CẮT (Mark In / Mark Out)
+   Bấm vào 1 file trong danh sách để xem trước. Phát (Space) hoặc kéo thanh timeline tới điểm bắt đầu rồi bấm I (Mark In), tới điểm kết thúc rồi bấm O (Mark Out). Có thể kéo 2 cột mốc xanh/cam trên timeline để chỉnh.
+   Hoặc gõ timecode HH:MM:SS:FF ({TC_FPS} frame = 1 giây) vào ô In / Out / Duration:
+      • nhập In + Out  → Duration tự tính
+      • nhập In + Duration → Out tự điền
+   Lưu ý: "1:07" là 1 giây 7 frame. Muốn 1 phút 7 giây hãy gõ "1:07:00" (hoặc "67"). Gõ không có dấu ":" là số giây.
+   File chưa đặt In/Out sẽ được xử lý toàn bộ file.
+
+3. CHỌN THÔNG SỐ FILE THÀNH PHẨM
+   Chọn Profile ở khung bên phải (mặc định "Match Source - cắt chính xác frame"). Mục nào để "Match Source" thì giữ nguyên như file gốc. Có thể chỉnh từng mục rồi bấm "Lưu" / "Lưu thành…" để tạo profile riêng.
+
+4. CHỌN NƠI LƯU
+   Tick "Lưu cùng thư mục file gốc" hoặc chọn thư mục riêng. File ra có hậu tố _cut (đổi được); trùng tên thì tự thêm _2, _3… nên không ghi đè file nào.
+   Đặt tên file ra (mới ở bản 1.1): bấm chọn file trong danh sách, gõ vào ô "Tên file ra" (dưới ô Mark In/Out) rồi Enter. Không gõ đuôi (đuôi lấy theo Container). Cột "Tên file ra" trong danh sách hiện tên sẽ dùng; bấm "Tự động" để trở về tên mặc định. Mỗi file có tên riêng.
+
+5. BẤM START
+   Chương trình cắt lần lượt từ trên xuống dưới, xem tiến độ ở cột "Trạng thái" và thanh tiến độ. Bấm "Dừng" để ngắt. Xong bấm "Mở thư mục kết quả".
+
+# GHÉP NHIỀU ĐOẠN (JOIN)
+Đặt Mark In/Out cho từng file, chọn từ 2 file trở lên (Ctrl+click hoặc Shift+click), bấm "Join files". Các đoạn được ghép thành 1 file theo thứ tự từ trên xuống trong danh sách (dùng ▲ Lên / ▼ Xuống để đổi thứ tự). Hộp xác nhận có ô "Tên file ra" để đặt tên file join (để trống = tên file đầu + hậu tố _join). Join luôn encode lại video; "Match Source" lấy theo file đầu tiên.
+
+# CẮT NHANH (COPY) VÀ KEYFRAME
+Dùng profile "Match Source - cắt nhanh (copy)" khi cần cắt rất nhanh và chấp nhận điểm vào chỉ rơi đúng tại keyframe (file .wmv thường cách nhau khoảng 5-6 giây).
+1. Chọn profile "cắt nhanh (copy)", đặt Mark In / Mark Out như bình thường.
+2. Xem dòng chữ dưới ô Mark In/Out: màu cam ⚠ cho biết file ra thực tế bắt đầu ở đâu và sớm hơn Mark In bao nhiêu giây; màu xanh ✔ là Mark In đã đúng keyframe.
+3. Muốn Mark In khớp điểm cắt thì bấm MỘT trong hai nút: "In → keyframe trước" (đúng chỗ sẽ cắt, giữ thêm đoạn đầu) hoặc "In → keyframe sau" (bỏ phần thừa phía trước, mất đoạn từ Mark In cũ).
+4. Bấm START. Hai nút này chỉ bật khi đang cắt copy; cần đúng từng frame thì dùng profile "cắt chính xác frame".
+
+# PHÍM TẮT
+Space = Play / Pause          I / O = Mark In / Mark Out
+← / → = lùi / tới 1 frame      Shift + ←/→ = ±1 giây      Ctrl + ←/→ = ±10 giây
+Home / End = nhảy tới In / Out   Delete = xoá file đang chọn      F1 = mở hướng dẫn này
+
+# LƯU Ý
+• Profile "cắt nhanh (copy)": không encode lại nên rất nhanh, nhưng điểm vào lệch về keyframe gần nhất (xem mục CẮT NHANH ở trên).
+• Profile "cắt chính xác frame": encode lại video (cùng codec và bitrate với file gốc) nên đúng từng frame nhưng chậm hơn.
+• Đổi size / bitrate / frame rate / codec… cũng khiến chương trình encode lại video.
+• Preview chỉ để chọn điểm cắt, có tiếng khi Play (bật/tắt và chỉnh âm lượng ở ô 🔊 Tiếng).
+• Gặp lỗi: xem cột "Trạng thái" và file trimfile_error.log cạnh chương trình.
+
+{APP_TITLE}"""
+
+
 # ----------------------------------------------------------------------------
 # Hàm tiện ích
 # ----------------------------------------------------------------------------
-TC_FPS = 25  # timecode dạng HH:MM:SS:FF, 1 giây = 25 frame
-
-
 def fmt_tc(t):
     """giây -> HH:MM:SS:FF (FF = 00..24)."""
     if t is None:
@@ -326,6 +376,55 @@ def describe_info(info):
     return "   |   ".join(parts)
 
 
+ASF_EXTS = ("wmv", "asf")      # nguồn xen audio đi trước hình -> cắt copy cần -ss ở đầu ra (xem build_command)
+
+
+def copy_video_mode(info, src_path, S):
+    """True nếu với cài đặt S phần video được stream-copy (chỉ cắt được tại keyframe).
+    Chỉ để hiển thị trên giao diện; điều kiện giống nhánh `reencode` trong build_command."""
+    v = info.get("v") if info else None
+    if not v:
+        return False
+    spec = parse_bitrate(S["bitrate"])
+    if spec is None:
+        return False
+    if (ENC_BY_LABEL.get(S["vcodec"]) or parse_size(S["size"]) or parse_fps(S["fps"])
+            or spec[0] != "match" or S["pixfmt"] != MATCH or S["accurate"]):
+        return False
+    cv = CONTAINER_V.get(resolve_container(S, src_path))
+    return cv is None or v["codec"] in cv
+
+
+def find_keyframes(path, t, span=30.0):
+    """Thời điểm (giây, tính như mark in) của keyframe video gần nhất <= t và keyframe đầu tiên > t.
+    Mỗi giá trị có thể là None. Chỉ đọc packet quanh t nên nhanh, không giải mã."""
+    lo = max(t - span, 0.0)
+    while True:
+        r = run_quiet([FFPROBE, "-v", "error", "-select_streams", "v:0", "-print_format", "json",
+                       "-show_entries", "packet=pts_time,dts_time,flags:format=start_time",
+                       "-read_intervals", f"{lo:.3f}%{t + span:.3f}", path], capture_output=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.decode("utf-8", "replace").strip() or "ffprobe lỗi")
+        data = json.loads(r.stdout.decode("utf-8", "replace"))
+        try:
+            base = float(data.get("format", {}).get("start_time") or 0)
+        except ValueError:
+            base = 0.0
+        keys = []
+        for p in data.get("packets", []):
+            if "K" not in (p.get("flags") or ""):
+                continue
+            try:
+                keys.append(float(p.get("pts_time") if p.get("pts_time") not in (None, "N/A") else p["dts_time"]) - base)
+            except (KeyError, TypeError, ValueError):
+                continue
+        before = max((k for k in keys if k <= t + 0.001), default=None)
+        if before is not None or lo <= 0:
+            after = min((k for k in keys if k > t + 0.001), default=None)
+            return (max(before, 0.0) if before is not None else None), after
+        lo = max(lo - span * 2, 0.0)
+
+
 # ----------------------------------------------------------------------------
 # Dựng lệnh ffmpeg
 # ----------------------------------------------------------------------------
@@ -406,18 +505,27 @@ def describe_plan(S):
     return f"🔁 {v.capitalize()}, {a}{extra}. Chậm hơn chế độ copy."
 
 
-def build_command(info, src_path, out_path, start, end, S):
-    """Tạo lệnh ffmpeg cho 1 job. Trả về (cmd, mô_tả)."""
+def build_command(info, src_path, out_path, start, end, S, copy_start=None):
+    """Tạo lệnh ffmpeg cho 1 job. Trả về (cmd, mô_tả).
+    copy_start: keyframe video ngay trước `start` (find_keyframes). Chỉ dùng khi cắt copy video: dùng thêm -ss ở
+    đầu ra để audio cũng bắt đầu đúng tại keyframe (nguồn ASF/WMV hay xen audio đi trước hình ~1s)."""
     v, a = info["v"], info["a"]
     cont = ext_of(out_path)
     cv, ca = CONTAINER_V.get(cont), CONTAINER_A.get(cont)
 
     cmd = [FFMPEG, "-hide_banner", "-nostdin", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"]
-    if start and start > 0:
-        cmd += ["-ss", f"{start:.3f}"]
-    cmd += ["-i", src_path]
-    if end is not None:
-        cmd += ["-t", f"{end - (start or 0):.3f}"]
+    if (copy_start is not None and start and start > 0 and ext_of(src_path) in ASF_EXTS
+            and copy_video_mode(info, src_path, S)):
+        pre = max(copy_start - 10.0, 0.0)
+        cmd += ["-ss", f"{pre:.3f}", "-i", src_path, "-ss", f"{max(copy_start - pre - 0.001, 0.0):.3f}"]
+        if end is not None:
+            cmd += ["-t", f"{end - copy_start:.3f}"]
+    else:
+        if start and start > 0:
+            cmd += ["-ss", f"{start:.3f}"]
+        cmd += ["-i", src_path]
+        if end is not None:
+            cmd += ["-t", f"{end - (start or 0):.3f}"]
     cmd += ["-map", "0:v:0?", "-map", "0:a?", "-sn", "-dn", "-map_metadata", "0", "-map_chapters", "-1"]
     notes = []
     video_reencoded = False
@@ -616,6 +724,24 @@ def build_join_command(clips, out_path, S, graph_path):
     return cmd, f"join {len(clips)} đoạn → " + ", ".join(notes), total
 
 
+_BAD_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+_VIDEO_EXT_RE = re.compile(r"(?i)^(.*)\.(mp4|m4v|mkv|mov|avi|wmv|asf|webm|ts|mts|m2ts|flv|mpg|mpeg)$")
+
+
+def clean_filename(text):
+    """Tên file (không đuôi) hợp lệ trên Windows từ chuỗi người dùng gõ; '' nếu không còn gì.
+    Bỏ đuôi video nếu người dùng gõ kèm (đuôi do Container quyết định)."""
+    name = _BAD_NAME_CHARS.sub("_", (text or "").strip())
+    m = _VIDEO_EXT_RE.match(name)
+    if m:
+        name = m.group(1)
+    name = name.strip(" .")
+    if name.split(".")[0].upper() in _RESERVED_NAMES:
+        name += "_"
+    return name
+
+
 def unique_path(folder, stem, suffix, ext):
     p = os.path.join(folder, f"{stem}{suffix}.{ext}")
     n = 2
@@ -727,6 +853,7 @@ class Item:
         self.state = "probing"    # probing | ready | running | done | error | stopped
         self.status = "Đang đọc…"
         self.out_path = None
+        self.out_name = ""        # tên file ra do người dùng đặt (không đuôi); rỗng = tự đặt theo tên gốc + hậu tố
 
     def clip_range(self):
         dur = self.info["duration"] if self.info else 0
@@ -744,7 +871,7 @@ PREVIEW_FPS = 15
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("TrimFile – Cắt video hàng loạt bằng ffmpeg")
+        root.title(APP_TITLE)
         self.sf = max(root.winfo_fpixels("1i") / 96.0, 1.0)
         root.geometry(f"{self.px(1280)}x{self.px(880)}")
         root.minsize(self.px(1100), self.px(740))
@@ -763,6 +890,7 @@ class App:
         self.cur_iid = None
         self.pos = 0.0
         self.photo = None
+        self.kf_cache = {}         # (path, tin) -> (keyframe trước, keyframe sau)
 
         self.still_gen = 0
         self.still_proc = None
@@ -779,6 +907,7 @@ class App:
         self.play_clock = None
         self.play_pending = None
         self.audio_proc = None
+        self.help_win = None
 
         self.running = False
         self.stop_flag = threading.Event()
@@ -896,6 +1025,7 @@ class App:
             b = ttk.Button(bar, text=text, command=cmd)
             b.pack(side="left", padx=2)
             self.list_buttons.append(b)
+        ttk.Button(bar, text="❓ Hướng dẫn sử dụng", command=self.show_help).pack(side="right", padx=2)
         jb = ttk.Button(bar, text="🔗 Join files", style="Accent.TButton", command=self.start_join)
         jb.pack(side="left", padx=(14, 2))
         self.list_buttons.append(jb)
@@ -904,9 +1034,10 @@ class App:
         lf = ttk.Frame(root, padding=(8, 2))
         lf.grid(row=1, column=0, sticky="ew")
         lf.columnconfigure(0, weight=1)
-        cols = ("no", "name", "dur", "tin", "tout", "len", "status")
+        cols = ("no", "name", "out", "dur", "tin", "tout", "len", "status")
         self.tree = ttk.Treeview(lf, columns=cols, show="headings", height=7, selectmode="extended")
-        heads = (("no", "#", 36, "center"), ("name", "Tên file", 380, "w"), ("dur", "Thời lượng", 100, "center"),
+        heads = (("no", "#", 36, "center"), ("name", "Tên file", 300, "w"), ("out", "Tên file ra", 230, "w"),
+                 ("dur", "Thời lượng", 100, "center"),
                  ("tin", "Mark In", 105, "center"), ("tout", "Mark Out", 105, "center"),
                  ("len", "Độ dài clip", 105, "center"), ("status", "Trạng thái", 240, "w"))
         for c, t, w, anc in heads:
@@ -995,10 +1126,29 @@ class App:
         act.grid(row=5, column=0, sticky="ew", pady=(4, 0))
         ttk.Button(act, text="▶ Xem đoạn In→Out", command=self.play_selection).pack(side="left", padx=2)
         ttk.Button(act, text="Xoá In/Out", command=self.clear_marks).pack(side="left", padx=2)
+        self.kf_btns = [ttk.Button(act, text="In → keyframe trước", command=lambda: self.snap_in(False)),
+                        ttk.Button(act, text="In → keyframe sau", command=lambda: self.snap_in(True))]
+        for b in self.kf_btns:
+            b.pack(side="left", padx=(12, 2) if b is self.kf_btns[0] else 2)
+        nm = ttk.Frame(pf)
+        nm.grid(row=6, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(nm, text="Tên file ra", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(2, 6))
+        self.name_var = tk.StringVar()
+        self.name_entry = ttk.Entry(nm, textvariable=self.name_var, width=40)
+        self.name_entry.pack(side="left", padx=2)
+        self.name_iid = None                    # file mà ô tên đang thuộc về
+        self.name_entry.bind("<Return>", lambda e: self.commit_name())
+        self.name_entry.bind("<FocusOut>", lambda e: self.commit_name())
+        ttk.Button(nm, text="Tự động", width=8, command=self.reset_name).pack(side="left", padx=4)
+        self.name_hint = tk.StringVar()
+        ttk.Label(nm, textvariable=self.name_hint, style="Hint.TLabel").pack(side="left", padx=4)
+        self.kf_var = tk.StringVar()
+        self.kf_lbl = ttk.Label(pf, textvariable=self.kf_var, wraplength=self.px(560), justify="left")
+        self.kf_lbl.grid(row=7, column=0, sticky="w", pady=(4, 0))
         ttk.Label(pf, text=f"Timecode HH:MM:SS:FF ({TC_FPS} frame/giây; gõ '90' = 90 giây). Nhập In + Out → tự tính Duration; "
                            "nhập In + Duration → tự điền Out.\nPhím tắt: Space=Play/Pause · I / O=Mark In/Out · ←/→=±1 frame · "
                            "Shift+←/→=±1s · Ctrl+←/→=±10s · Home/End=tới In/Out",
-                  style="Hint.TLabel").grid(row=6, column=0, sticky="w", pady=(4, 0))
+                  style="Hint.TLabel").grid(row=8, column=0, sticky="w", pady=(4, 0))
 
     def _add_combo(self, parent, row, label, key, values, editable=False, width=26):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2, padx=(0, 6))
@@ -1059,6 +1209,7 @@ class App:
         self.same_dir_var = tk.BooleanVar(value=self.config.get("same_dir", True))
         self.out_dir_var = tk.StringVar(value=self.config.get("out_dir", ""))
         self.suffix_var = tk.StringVar(value=self.config.get("suffix", "_cut"))
+        self.suffix_var.trace_add("write", lambda *_: self._suffix_changed())
 
         ttk.Checkbutton(of, text="Lưu cùng thư mục file gốc", variable=self.same_dir_var,
                         command=self._sync_out_state).grid(row=0, column=0, sticky="w")
@@ -1086,6 +1237,50 @@ class App:
         self.out_browse.configure(state=st)
 
     # ------------------------------------------------------------------ phím tắt
+    def show_help(self):
+        """Bảng hướng dẫn sử dụng ngắn gọn cho operator."""
+        if self.help_win is not None and self.help_win.winfo_exists():
+            self.help_win.deiconify()
+            self.help_win.lift()
+            self.help_win.focus_force()
+            return
+        w = self.help_win = tk.Toplevel(self.root)
+        w.title(f"Hướng dẫn sử dụng - {APP_TITLE}")
+        w.transient(self.root)
+        ww, wh = self.px(760), self.px(640)
+        x = self.root.winfo_rootx() + max((self.root.winfo_width() - ww) // 2, 0)
+        y = self.root.winfo_rooty() + max((self.root.winfo_height() - wh) // 2, 0)
+        w.geometry(f"{ww}x{wh}+{x}+{y}")
+        w.minsize(self.px(520), self.px(360))
+        ttk.Label(w, text=APP_TITLE, font=("Segoe UI", 14, "bold"), foreground="#0b4a8f").pack(anchor="w", padx=14, pady=(12, 0))
+        ttk.Label(w, text="Cắt / ghép video hàng loạt bằng ffmpeg", style="Hint.TLabel").pack(anchor="w", padx=14)
+        body = ttk.Frame(w)
+        body.pack(fill="both", expand=True, padx=10, pady=8)
+        txt = tk.Text(body, wrap="word", font=("Segoe UI", 10), relief="flat", padx=8, pady=4, spacing3=2,
+                      bg="#fbfbfc", highlightthickness=1, highlightbackground="#d0d4da", cursor="arrow")
+        sb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        txt.tag_configure("h", font=("Segoe UI", 11, "bold"), foreground="#0b4a8f", spacing1=10, spacing3=4)
+        txt.tag_configure("step", font=("Segoe UI", 10, "bold"), spacing1=4)
+        txt.tag_configure("foot", foreground="#666", spacing1=12)
+        for line in GUIDE_TEXT.splitlines():
+            if line.startswith("# "):
+                txt.insert("end", line[2:] + "\n", "h")
+            elif re.match(r"^\d\. [A-ZÀ-Ỹ]", line):
+                txt.insert("end", line + "\n", "step")
+            elif line == APP_TITLE:
+                txt.insert("end", line + "\n", "foot")
+            else:
+                txt.insert("end", line + "\n")
+        txt.configure(state="disabled")
+        bf = ttk.Frame(w)
+        bf.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(bf, text="Đóng", command=w.destroy).pack(side="right")
+        w.bind("<Escape>", lambda e: w.destroy())
+        w.focus_set()
+
     def _bind_keys(self):
         r = self.root
 
@@ -1098,6 +1293,7 @@ class App:
                 return "break"
             return h
 
+        r.bind("<F1>", lambda e: self.show_help())
         r.bind("<space>", guard(self.toggle_play))
         r.bind("<Key-i>", guard(self.mark_in))
         r.bind("<Key-o>", guard(self.mark_out))
@@ -1129,11 +1325,15 @@ class App:
         self.modified = False
         self.mod_var.set("")
         self.hint_var.set(describe_plan(self.current_settings()))
+        self._update_kf_ui()
+        self._update_name_hint()
 
     def _on_setting_change(self, *_):
         if self._loading:
             return
         self.hint_var.set(describe_plan(self.current_settings()))
+        self._update_kf_ui()
+        self._update_name_hint()
         saved = self.profiles.get(self.profile_var.get())
         self.modified = saved is None or any(saved.get(k, DEFAULT_SETTINGS[k]) != v
                                              for k, v in self.current_settings().items())
@@ -1222,7 +1422,9 @@ class App:
         dur = fmt_tc(it.info["duration"]) if it.info else ""
         s, e = it.clip_range() if it.info else (0, 0)
         ln = fmt_tc(e - s) if it.info and (it.tin is not None or it.tout is not None) else ("(cả file)" if it.info else "")
-        return (no if no is not None else "", it.name, dur, fmt_tc(it.tin) if it.tin is not None else "",
+        suffix = self.suffix_var.get() if hasattr(self, "suffix_var") else "_cut"
+        out = it.out_name or os.path.splitext(it.name)[0] + suffix
+        return (no if no is not None else "", it.name, out, dur, fmt_tc(it.tin) if it.tin is not None else "",
                 fmt_tc(it.tout) if it.tout is not None else "", ln, it.status)
 
     def _renumber(self):
@@ -1303,6 +1505,8 @@ class App:
         self.dur_var.set("")
         self.time_var.set("00:00:00:00 / 00:00:00:00")
         self.timeline.set_state(dur=0, pos=0, tin=None, tout=None)
+        self._load_name()
+        self._update_kf_ui()
 
     def on_select(self, _=None):
         sel = self.tree.selection()
@@ -1319,11 +1523,13 @@ class App:
             return
         self.stop_play()
         self.cur, self.cur_iid = it, iid
+        self._load_name()
         if not it.info:
             self.canvas.itemconfig(self.msg_id, state="normal", text=it.status)
             self.canvas.itemconfig(self.img_id, image="")
             self.info_var.set("")
             self.timeline.set_state(dur=0, pos=0, tin=None, tout=None)
+            self._update_kf_ui()
             return
         self.canvas.itemconfig(self.msg_id, state="hidden")
         self.info_var.set(describe_info(it.info))
@@ -1341,6 +1547,7 @@ class App:
             self.dur_var.set(fmt_tc(e - s))
         self.timeline.set_state(tin=it.tin, tout=it.tout)
         self.refresh_row(self.cur_iid)
+        self._update_kf_ui()
 
     def _frame_step(self):
         v = self.cur.info.get("v") if self.cur and self.cur.info else None
@@ -1603,6 +1810,120 @@ class App:
             self.cur.tin = self.cur.tout = None
             self._marks_changed()
 
+    # ---- tên file ra
+    def _load_name(self):
+        """Nạp tên file ra của file đang chọn vào ô nhập."""
+        self.commit_name()                      # chốt chữ đang gõ dở của file trước đó
+        it = self.cur
+        self.name_iid = self.cur_iid if it else None
+        self.name_var.set(it.out_name if it else "")
+        self.name_entry.state(["!disabled"] if it else ["disabled"])
+        self._update_name_hint()
+
+    def _update_name_hint(self):
+        if not hasattr(self, "name_hint"):
+            return
+        it = self.items.get(self.name_iid) if self.name_iid else None
+        if not it:
+            self.name_hint.set("")
+            return
+        ext = resolve_container(self.current_settings(), it.path)
+        auto = os.path.splitext(it.name)[0] + self.suffix_var.get()
+        self.name_hint.set(f"→ {it.out_name}.{ext}" if it.out_name else f"Để trống = tự đặt: {auto}.{ext}")
+
+    def commit_name(self):
+        it = self.items.get(self.name_iid) if self.name_iid else None
+        if not it:
+            return
+        name = clean_filename(self.name_var.get())
+        self.name_var.set(name)
+        if name != it.out_name:
+            it.out_name = name
+            self.refresh_row(self.name_iid)
+        self._update_name_hint()
+
+    def _suffix_changed(self):
+        for iid in self.items:
+            self.refresh_row(iid)
+        self._update_name_hint()
+
+    def reset_name(self):
+        self.name_var.set("")
+        self.commit_name()
+
+    # ---- keyframe (chỉ có ý nghĩa khi cắt copy; không ảnh hưởng lệnh cắt)
+    def _kf_key(self):
+        it = self.cur
+        return (it.path, round(it.tin, 3)) if it and it.tin else None
+
+    def _update_kf_ui(self):
+        if not hasattr(self, "kf_var"):
+            return
+        it = self.cur
+        copy = bool(it and it.info and copy_video_mode(it.info, it.path, self.current_settings()))
+        for b in self.kf_btns:
+            b.state(["!disabled"] if copy else ["disabled"])
+        if not copy:
+            self.kf_var.set("")
+            return
+        key = self._kf_key()
+        if key is None:
+            self._kf_show("Cắt copy: chỉ cắt được tại keyframe, nên điểm bắt đầu có thể sớm hơn Mark In. "
+                          "Đặt Mark In để xem điểm bắt đầu thực tế.", "#555555")
+        elif key in self.kf_cache:
+            self._on_kf(key, self.kf_cache[key], None)
+        else:
+            self._kf_show("Đang dò keyframe…", "#555555")
+            threading.Thread(target=self._kf_worker, args=(key, it.path, it.tin), daemon=True).start()
+
+    def _kf_show(self, text, color):
+        self.kf_var.set(text)
+        self.kf_lbl.configure(foreground=color)
+
+    def _kf_worker(self, key, path, t):
+        try:
+            res, err = find_keyframes(path, t), None
+        except Exception as e:
+            res, err = None, str(e)
+        self.q.put(("kf", key, res, err))
+
+    def _on_kf(self, key, res, err):
+        if err or res is None:
+            if key == self._kf_key():
+                self._kf_show("Không dò được keyframe" + (f": {err}" if err else "") + ".", "#555555")
+            return
+        self.kf_cache[key] = res
+        if key != self._kf_key():
+            return                      # Mark In đã đổi trong lúc dò
+        before = res[0]
+        if before is None or key[1] - before <= self._frame_step() * 0.6:
+            self._kf_show("✔ Mark In nằm đúng keyframe: cắt copy cho điểm bắt đầu chính xác.", "#1a7f37")
+        else:
+            self._kf_show(f"⚠ Cắt copy: file ra bắt đầu ở {fmt_tc(before)}, sớm hơn Mark In {key[1] - before:.2f}s "
+                          "(chỉ cắt được tại keyframe). Bấm \"In → keyframe\" để Mark In khớp điểm cắt.", "#a65d00")
+
+    def snap_in(self, forward):
+        """Đưa Mark In về keyframe gần nhất phía trước (đúng chỗ cắt copy sẽ bắt đầu) hoặc keyframe kế tiếp."""
+        it = self.cur
+        if not it or not it.info:
+            return
+        t = it.tin if it.tin else self.pos
+        key = (it.path, round(t, 3))
+        res = self.kf_cache.get(key)
+        if res is None:
+            try:
+                res = find_keyframes(it.path, t)
+            except Exception as e:
+                messagebox.showerror("Dò keyframe", str(e))
+                return
+            self.kf_cache[key] = res
+        target = res[1] if forward else res[0]
+        if target is None:
+            self._kf_show("Không có keyframe " + ("phía sau." if forward else "phía trước."), "#555555")
+            return
+        self.set_in(target)
+        self.seek(target)
+
     def entry_commit(self, which):
         """Nhập tay In / Out / Duration. In+Out -> tính Duration; In+Duration -> điền Out."""
         it = self.cur
@@ -1694,6 +2015,8 @@ class App:
                         self._show_ppm(ev[2])
                 elif kind == "probe":
                     self._on_probe(*ev[1:])
+                elif kind == "kf":
+                    self._on_kf(*ev[1:])
                 elif kind == "hw":
                     self.hw_ok = ev[1]
                     self.vcodec_cb.configure(values=self._vcodec_values())
@@ -1763,6 +2086,7 @@ class App:
     def start(self):
         if self.running:
             return
+        self.commit_name()
         prep = self._prepare_run()
         if not prep:
             return
@@ -1814,13 +2138,15 @@ class App:
                 return
             clips.append((iid, it, s, e))
         total = sum(e - s for _, _, s, e in clips)
-        if not messagebox.askyesno(
-                "Join files",
-                f"Ghép {len(clips)} đoạn thành 1 file, tổng thời lượng {fmt_tc(total)}:\n\n" +
-                "\n".join(f"{n}. {it.name}  [{fmt_tc(s)} → {fmt_tc(e)}]" for n, (_, it, s, e) in enumerate(clips[:12], 1)) +
-                (f"\n… và {len(clips) - 12} đoạn nữa" if len(clips) > 12 else "") +
-                "\n\nJoin luôn encode lại video để ghép chính xác. Mục 'Match Source' lấy theo file đầu tiên "
-                "(size, fps, codec, bitrate). Tiếp tục?"):
+        S = self.current_settings()
+        auto = f"{os.path.splitext(clips[0][1].name)[0]}_join.{resolve_container(S, clips[0][1].path)}"
+        ok, join_name = self._ask_join(
+            f"Ghép {len(clips)} đoạn thành 1 file, tổng thời lượng {fmt_tc(total)}:\n\n" +
+            "\n".join(f"{n}. {it.name}  [{fmt_tc(s)} → {fmt_tc(e)}]" for n, (_, it, s, e) in enumerate(clips[:12], 1)) +
+            (f"\n… và {len(clips) - 12} đoạn nữa" if len(clips) > 12 else "") +
+            "\n\nJoin luôn encode lại video để ghép chính xác. Mục 'Match Source' lấy theo file đầu tiên "
+            "(size, fps, codec, bitrate).", auto)
+        if not ok:
             return
         prep = self._prepare_run()
         if not prep:
@@ -1833,15 +2159,57 @@ class App:
         for iid, it, _, _ in clips:
             it.status = "Đang chờ join…"
             self.refresh_row(iid)
-        threading.Thread(target=self._run_join, args=([(i, it) for i, it, _, _ in clips], S, out_cfg),
+        threading.Thread(target=self._run_join, args=([(i, it) for i, it, _, _ in clips], S, out_cfg, join_name),
                          daemon=True).start()
 
-    def _run_join(self, pairs, S, out_cfg):
+    def _ask_join(self, summary, auto_name):
+        """Hộp xác nhận Join kèm ô đặt tên file ra. Trả về (đồng ý, tên đã làm sạch hoặc '' = tự đặt)."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Join files")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=summary, justify="left", wraplength=self.px(520)).pack(anchor="w")
+        row = ttk.Frame(frm)
+        row.pack(fill="x", pady=(12, 0))
+        ttk.Label(row, text="Tên file ra", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
+        var = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=var, width=44)
+        entry.pack(side="left", fill="x", expand=True)
+        ttk.Label(frm, text=f"Để trống = tự đặt: {auto_name}  (không cần gõ đuôi file)",
+                  style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+        result = {"ok": False}
+
+        def accept(_=None):
+            result["ok"] = True
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(12, 0))
+        ttk.Button(btns, text="Huỷ", command=dlg.destroy).pack(side="right")
+        ttk.Button(btns, text="Join", style="Accent.TButton", command=accept).pack(side="right", padx=6)
+        dlg.bind("<Return>", accept)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 3
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.grab_set()
+        entry.focus_set()
+        self.root.wait_window(dlg)
+        return result["ok"], clean_filename(var.get()) if result["ok"] else ""
+
+    def _run_join(self, pairs, S, out_cfg, join_name=""):
         same_dir, out_dir, _ = out_cfg
         iids = [i for i, _ in pairs]
         items = [it for _, it in pairs]
         folder = os.path.dirname(items[0].path) if same_dir else out_dir
-        out_path = unique_path(folder, os.path.splitext(items[0].name)[0], "_join", resolve_container(S, items[0].path))
+        cont = resolve_container(S, items[0].path)
+        if join_name:
+            out_path = unique_path(folder, join_name, "", cont)
+        else:
+            out_path = unique_path(folder, os.path.splitext(items[0].name)[0], "_join", cont)
         graph_path = os.path.join(tempfile.gettempdir(), f"trimfile_join_{os.getpid()}.txt")
         done = fails = 0
         try:
@@ -1917,10 +2285,19 @@ class App:
             clip = end - start
             folder = os.path.dirname(it.path) if same_dir else out_dir
             cont = resolve_container(S, it.path)
-            out_path = unique_path(folder, os.path.splitext(it.name)[0], suffix, cont)
+            if it.out_name:
+                out_path = unique_path(folder, it.out_name, "", cont)
+            else:
+                out_path = unique_path(folder, os.path.splitext(it.name)[0], suffix, cont)
+            kf = None
+            if start > 0 and ext_of(it.path) in ASF_EXTS and copy_video_mode(it.info, it.path, S):
+                try:
+                    kf = find_keyframes(it.path, start)[0]
+                except Exception:
+                    kf = None               # không dò được -> dùng cách cắt cũ
             try:
                 cmd, note = build_command(it.info, it.path, out_path, start,
-                                          end if it.tout is not None else None, S)
+                                          end if it.tout is not None else None, S, copy_start=kf)
             except Exception as e:
                 self.q.put(("job", "error", iid, n, total, str(e)))
                 fails += 1
@@ -2039,7 +2416,8 @@ def main():
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S\n") + text + "\n")
         except OSError:
             pass
-        sys.stderr.write(text)
+        if sys.stderr:                  # bản .exe không có console -> stderr là None
+            sys.stderr.write(text)
 
     root.report_callback_exception = report
     if not (FFMPEG and FFPROBE):

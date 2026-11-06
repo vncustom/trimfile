@@ -8,3 +8,10 @@ __pycache__/
 # File phát sinh khi chạy
 config.json
 trimfile_error.log
+
+# Build .exe (xem HUONG_DAN_BUILD_EXE.md)
+.venv-build/
+build/
+dist/
+release/
+*.spec
